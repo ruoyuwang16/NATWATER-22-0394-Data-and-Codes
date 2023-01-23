@@ -1,0 +1,135 @@
+% Supplementary MATLAB Codes for generating figure 4 in the main text.
+
+% Inputs
+Pressure = 4; % bar, target constant pressure
+cf1 = 3.4; % mM, Li feed
+cf2 = 19.6; % mM, Mg feed
+cf3 = cf1 + 2*cf2; % mM, Cl feed
+A = 18; % LMH/bar, water permeance
+
+% main loop
+dWR = 0.01; % water recovery step size
+WR = 0.8; % target final water recovery
+n = WR/dWR; % number of steps
+i = 1; % step indicator
+
+jvlist = zeros(1, n);
+cflist1 = zeros(1, n+1);
+cflist2 = zeros(1, n+1);
+cflist3 = zeros(1, n+1);
+cplist1 = zeros(1, n);
+cplist2 = zeros(1, n);
+cplist3 = zeros(1, n);
+cpmlist1 = zeros(1, n);
+cpmlist2 = zeros(1, n);
+plist1 = zeros(1, n);
+plist2 = zeros(1, n);
+rlilist = zeros(1, n+1);
+
+cflist1(i) = cf1;
+cflist2(i) = cf2;
+cflist3(i) = cf3;
+while i<=n
+    if i==1
+        jvguess = 0.1;
+    else
+        jvguess = jvlist(i-1)+0.1;
+    end
+    y = SDEM([Pressure, cflist1(i), cflist2(i), cflist3(i),jvguess], A);
+    cplist1(i) = y(1);
+    cplist2(i) = y(2);
+    cplist3(i) = y(3);
+    cpmlist1(i) = mean(cplist1(1:i));
+    cpmlist2(i) = mean(cplist2(1:i));
+    rlilist(i+1) = i*dWR*mean(cplist1(1:i))/cf1;
+    cflist1(i+1) = ((1-(i-1)*dWR)*cflist1(i)-dWR*cplist1(i))/(1-(i-1)*dWR-dWR);
+    cflist2(i+1) = ((1-(i-1)*dWR)*cflist2(i)-dWR*cplist2(i))/(1-(i-1)*dWR-dWR);
+    cflist3(i+1) = ((1-(i-1)*dWR)*cflist3(i)-dWR*cplist3(i))/(1-(i-1)*dWR-dWR);
+    jvlist(i) = y(4);
+    plist1(i) = y(5);
+    plist2(i) = y(6);
+    i=i+1;
+    display(i);
+end
+
+% Post-process
+Rlist1 = 1-cplist1./cflist1(1:n); % Local Li rejection
+Rlist2 = 1-cplist2./cflist2(1:n); % Local Mg rejection
+Slist = (1-Rlist1)./(1-Rlist2); % Local selectivity
+Rover1 = 1-cpmlist1/cf1; % Cumulative Li rejection
+Rover2 = 1-cpmlist2/cf2; % Cumulative Mg rejection
+Sover = (1-Rover1)./(1-Rover2); % Cumulative selectivity
+jvlist = jvlist*3.6; % Flux converted to LMH
+MLR = cflist2./cflist1*(24/7); % MLR
+
+
+function y = SDEM(X,A)
+    
+    Pressure = X(1);
+    c1 = X(2);
+    c2 = X(3);
+    c3 = X(4);
+
+    z1 = 1; % Li
+    z2 = 2; % Mg
+    z3 = -1; % Cl
+
+    c0 = c1+c2+c3;
+    u0 = (z1^2*c1+z2^2*c2+z3^2*c3)/c0;
+
+    pi = z1*z2*z3;
+    sigma = z1+z2+z3;
+    
+    if X(5) == 0.1
+        Jv = A*(Pressure-8.314*298/1e5*(c1*2*licl(c1/1e3)+c2*3*mgcl2(c2/1e3)))/3.6; % um/s
+    else
+        Jv = X(5);
+    end
+    Jv_old = 0;
+    while abs(Jv-Jv_old)>0.001
+        P = PCF(c1, c2); % permeability as a function of Li, Mg conc.
+        p1 = P(1);
+        p2 = P(2);
+        p3 = p1;
+
+        b02 = (z2^2-z3^2)/p1-(z1^2-z3^2)/p2+(z1^2-z2^2)/p3;
+        b12 = z1*(z2^2-z3^2)/p1-z2*(z1^2-z3^2)/p2+z3*(z1^2-z2^2)/p3;
+        b01 = (z2-z3)/p1-(z1-z3)/p2+(z1-z2)/p3;
+        b11 = z1*(z2-z3)/p1-z2*(z1-z3)/p2+z3*(z1-z2)/p3;
+        b_11 = 1/z1*(z2-z3)/p1-1/z2*(z1-z3)/p2+1/z3*(z1-z2)/p3;
+
+        fun = @(x)upsolver(x,pi,b02,b12,b01,b11,b_11,u0,c0,z1,z2,z3,Jv);
+        x0 = -pi*(u0^2*b_11+u0*b02+pi*b01)/(u0^2*b01+u0*b12+pi*b11)+1e-6;
+        options = optimoptions('fsolve','Display','off');
+        up = fsolve(fun,x0,options);
+    
+        m1 = (pi*b02+b12*up)^2-4*pi*(pi*b01+b11*up)*(pi*b_11+b01*up);
+        m2 = pi*b02+b12*up;
+        m3 = 2*(pi*b_11+b01*up);
+        fp = (m1^0.5-m2)/m3;
+        fm = (m1^0.5+m2)/m3;
+    
+        n1 = (fm+u0)/(fm+up);
+        n2 = fm/(fm+fp);
+        n3 = (fp-u0)/(fp-up);
+        n4 = fp/(fm+fp);
+        cp = c0*n1^n2*n3^n4;
+        
+        cp1 = cp*(up+z2*z3)/(z1-z2)/(z1-z3);
+        cp2 = cp*(up+z1*z3)/(z2-z1)/(z2-z3);
+        cp3 = cp*(up+z2*z1)/(z3-z2)/(z3-z1);
+        
+        % Update for the next iteration
+        Jv_old = Jv;
+        c1 = cp1+(X(2)-cp1)*exp(Jv*3.6/100); % concentration polarization
+        c2 = cp2+(X(3)-cp2)*exp(Jv*3.6/100);
+        c3 = c1 + 2*c2;
+        c0 = c1+c2+c3;
+        u0 = (z1^2*c1+z2^2*c2+z3^2*c3)/c0;
+        Jv_new = A*(Pressure-8.314*298/1e5*(c1*2*licl(c1/1e3)+c2*3*mgcl2(c2/1e3)-cp1*2*licl(cp1/1e3)-cp2*3*mgcl2(cp2/1e3)))/3.6; % um/s
+        Jv = 0.5*Jv_old+0.5*Jv_new;
+    end
+    
+    y = [cp1, cp2, cp3, Jv, p1, p2];
+
+end
