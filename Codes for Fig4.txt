@@ -1,11 +1,11 @@
 % Supplementary MATLAB Codes for generating figure 4 in the main text.
 
 % Inputs
-Pressure = 4; % bar, target constant pressure
+Pressure = 6; % bar, target constant pressure
 cf1 = 3.4; % mM, Li feed
 cf2 = 19.6; % mM, Mg feed
 cf3 = cf1 + 2*cf2; % mM, Cl feed
-A = 18; % LMH/bar, water permeance
+A = 18.8; % LMH/bar, water permeance
 
 % main loop
 dWR = 0.01; % water recovery step size
